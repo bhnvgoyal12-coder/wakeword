@@ -1,0 +1,8 @@
+sherpa-onnx>=1.12
+numpy
+soundfile
+sentencepiece   # only needed to regenerate the vocab file (tools/export_vocab.py)
+protobuf        # ditto
+pytest
+# optional, for --mic:
+# sounddevice
