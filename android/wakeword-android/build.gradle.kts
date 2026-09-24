@@ -23,8 +23,9 @@ android {
 
 dependencies {
     implementation("com.findmyphone.wakeword:wakeword-core:0.1.0") // includeBuild("wakeword-core")
-    // sherpa-onnx 1.13.8 AAR from https://github.com/k2-fsa/sherpa-onnx/releases (fetched by fetch_models.sh)
-    implementation(files("libs/sherpa-onnx-1.13.8.aar"))
+    // sherpa-onnx AAR from https://github.com/k2-fsa/sherpa-onnx/releases, installed into
+    // ../local-maven by fetch_models.sh (not on Maven Central). `api` so apps get the .so files.
+    api("com.k2fsa.sherpa.onnx:sherpa-onnx:1.13.8")
 }
 
 val checkModels by tasks.registering {

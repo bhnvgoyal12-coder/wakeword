@@ -6,7 +6,10 @@ java {
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
-sourceSets.main { kotlin.srcDir("../wakeword-android/src/main/kotlin") }
+sourceSets.main {
+    kotlin.srcDir("../wakeword-android/src/main/kotlin")
+    kotlin.srcDir("../demo-app/src/main/kotlin")
+}
 
 dependencies {
     implementation("com.findmyphone.wakeword:wakeword-core:0.1.0")

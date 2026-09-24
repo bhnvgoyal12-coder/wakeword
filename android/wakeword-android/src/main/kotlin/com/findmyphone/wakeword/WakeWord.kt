@@ -2,6 +2,8 @@ package com.findmyphone.wakeword
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import com.findmyphone.wakeword.core.Detection
 import com.findmyphone.wakeword.core.KeywordSpec
 import java.util.concurrent.CopyOnWriteArraySet
@@ -10,7 +12,7 @@ import java.util.concurrent.CopyOnWriteArraySet
  * Public entry point for the host app (launcher).
  *
  *   // settings screen
- *   WakeWord.validate(ctx, KeywordSpec(text))?.let { showWarning(it) }
+ *   val v = WakeWord.validate(ctx, KeywordSpec(text))  // v.error blocks, v.warning advises
  *   WakeWord.start(ctx, listOf(KeywordSpec(text)))
  *
  *   // home activity
@@ -28,11 +30,24 @@ object WakeWord {
         data class Error(val message: String) : State
     }
 
+    /** Mic level (dBFS, ~-90..0) and whether the VAD gate is open, ~10x per second. */
+    data class Meter(val levelDb: Float, val speech: Boolean)
+
+    /** A detection with wall-clock time, for display. */
+    data class Event(val keyword: String, val wallTimeMs: Long)
+
     fun interface Listener { fun onWakeWord(detection: Detection) }
     fun interface StateListener { fun onState(state: State) }
+    fun interface MeterListener { fun onMeter(meter: Meter) }
 
     private val listeners = CopyOnWriteArraySet<Listener>()
     private val stateListeners = CopyOnWriteArraySet<StateListener>()
+    internal val meterListeners = CopyOnWriteArraySet<MeterListener>()
+    private val recent = ArrayDeque<Event>()
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+
+    /** Last [MAX_RECENT] detections in this process, newest last (survives the UI closing, not process death). */
+    val recentDetections: List<Event> get() = synchronized(recent) { recent.toList() }
     @Volatile var state: State = State.Stopped
         private set
 
@@ -40,8 +55,12 @@ object WakeWord {
     fun removeListener(l: Listener) = listeners.remove(l)
     fun addStateListener(l: StateListener) = stateListeners.add(l)
     fun removeStateListener(l: StateListener) = stateListeners.remove(l)
+    /** Listeners are called on the main thread. Metering only runs while at least one is registered. */
+    fun addMeterListener(l: MeterListener) = meterListeners.add(l)
+    fun removeMeterListener(l: MeterListener) = meterListeners.remove(l)
 
-    fun validate(context: Context, keyword: KeywordSpec): String? = WakeWordEngine.validate(context, keyword)
+    fun validate(context: Context, keyword: KeywordSpec): KeywordValidation =
+        WakeWordEngine.validate(context, keyword)
 
     /** Save keywords, enable, and (re)start listening. Call while the app is in the foreground. */
     fun start(context: Context, keywords: List<KeywordSpec>) {
@@ -64,12 +83,21 @@ object WakeWord {
 
     fun isEnabled(context: Context) = prefs(context).getBoolean(KEY_ENABLED, false)
 
+    /** Callable from any thread; listeners always run on the main thread. */
     internal fun publishState(s: State) {
         state = s
-        for (l in stateListeners) l.onState(s)
+        main.post { for (l in stateListeners) l.onState(s) }
+    }
+
+    internal fun publishMeter(m: Meter) {
+        for (l in meterListeners) l.onMeter(m)
     }
 
     internal fun dispatchDetection(context: Context, d: Detection) {
+        synchronized(recent) {
+            recent.addLast(Event(d.keyword, System.currentTimeMillis()))
+            while (recent.size > MAX_RECENT) recent.removeFirst()
+        }
         for (l in listeners) l.onWakeWord(d)
         context.sendBroadcast(Intent(ACTION_DETECTED).setPackage(context.packageName).putExtra(EXTRA_KEYWORD, d.keyword))
     }
@@ -88,6 +116,7 @@ object WakeWord {
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences("wakeword", Context.MODE_PRIVATE)
+    private const val MAX_RECENT = 50
     private const val KEY_ENABLED = "enabled"
     private const val KEY_KEYWORDS = "keywords"
 }

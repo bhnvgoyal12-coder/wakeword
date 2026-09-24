@@ -61,11 +61,10 @@ class WakeWordEngine private constructor(
             return WakeWordEngine(decoder, gate, GatedSpotter(gate, decoder, config), inputSampleRate)
         }
 
-        /** Returns null if OK, else a message to show the user (error or short-phrase warning). */
-        fun validate(context: Context, keyword: KeywordSpec): String? = try {
-            keyword.shortWarning(tokenizer(context))
+        fun validate(context: Context, keyword: KeywordSpec): KeywordValidation = try {
+            KeywordValidation(warning = keyword.shortWarning(tokenizer(context)))
         } catch (e: IllegalArgumentException) {
-            e.message
+            KeywordValidation(error = e.message ?: "invalid keyword")
         }
 
         @Volatile private var tok: UnigramTokenizer? = null
@@ -78,4 +77,9 @@ class WakeWordEngine private constructor(
         /** See README "Tuning": 4 = sherpa default. */
         const val DEFAULT_MAX_ACTIVE_PATHS = 4
     }
+}
+
+/** [error] = can't be used (block it); [warning] = usable but likely to false-trigger. */
+data class KeywordValidation(val error: String? = null, val warning: String? = null) {
+    val ok: Boolean get() = error == null
 }

@@ -11,4 +11,4 @@ android/verify/libs/
 !python/tests/fixtures/*.wav
 !android/wakeword-android/src/main/res/raw/*.wav
 android/wakeword-android/src/main/assets/wakeword/
-android/wakeword-android/libs/
+android/local-maven/

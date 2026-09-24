@@ -15,10 +15,49 @@ mic 16 kHz ─► pre-roll (0.5 s) ─► Silero VAD ─► sherpa KWS stream �
 |---|---|---|
 | `python/` | Reference engine, CLI (mic or WAV), evaluation pipeline | 19 pytest tests; full evaluation below |
 | `android/wakeword-core` | Pure-Kotlin port: tokenizer, gating state machine, cooldown, resampler | 16 JUnit tests on the JVM |
-| `android/wakeword-android` | sherpa adapters, microphone foreground service, `WakeWord` facade, ring action | **Type-checked only** against `android.jar` (API 34) and the sherpa-onnx 1.13.8 AAR. **Not built into an APK or run on a phone.** |
+| `android/wakeword-android` | sherpa adapters, microphone foreground service, `WakeWord` facade, ring action | Type-checked here against `android.jar` (API 34) and the sherpa-onnx 1.13.8 AAR. Built by CI into the demo APK. **Not yet run on a phone by me.** |
 | `shared/` | Tokenizer vocabulary + golden file both tokenizers are tested against | — |
 
+| `android/demo-app` | One-screen test app: type a phrase, start, see mic level, speech indicator and detections | APK built by GitHub Actions (see below) |
+
 To integrate into the launcher, see **[android/INTEGRATION.md](android/INTEGRATION.md)**.
+
+## Run it on your phone
+
+**Option A: download the APK (no tools needed).**
+1. Open the repo's **Actions** tab → latest **build** run on this branch → **Artifacts** →
+   `wakeword-demo-apk`. Unzip it to get `demo-app-debug.apk`.
+2. Copy it to the phone (or open the Actions page on the phone), tap it, and allow
+   "Install unknown apps" for your browser or file manager when prompted.
+3. Open **Wake Word Test**, type a phrase, tap **Start listening**, and grant microphone and
+   notification permission.
+
+**Option B: Android Studio + USB.**
+```bash
+cd android && ./fetch_models.sh        # models + sherpa AAR (once)
+./gradlew :demo-app:installDebug       # phone connected with USB debugging on
+```
+Or open `android/` in Android Studio, pick the `demo-app` run configuration, and press Run.
+
+**What the screen shows**
+
+| Element | Meaning |
+|---|---|
+| Microphone level bar | The mic is delivering audio. If it doesn't move when you talk, it's a mic or permission problem, not the model. |
+| ● speech / ○ quiet | The VAD gate. ● means the neural spotter is running. If this lights up but nothing is detected, the model heard speech and didn't match the phrase. |
+| Green flash + "DETECTED" | A detection, with the time. Also posted as a notification, so you see it with the screen locked. |
+| Recent list | The last 50 detections, including ones while the app was closed. |
+| Normal / Sensitive | boost 1.0 vs 2.0. Sensitive catches more in noise and false-alarms about 3× more. |
+| Ring on detection | Plays the alarm tone at full volume. Tap the panel to stop it. |
+
+**A 15-minute test script**
+1. Quiet room, 1 m away: say the phrase 10 times with pauses. Count detections.
+2. Same from 3 m, then from the next room with the door open.
+3. TV or music on at normal volume: 10 more tries.
+4. Talk normally for 5 minutes *without* the phrase (read something aloud, have a phone call nearby) and count false detections.
+5. Lock the screen, wait 10 minutes, say the phrase. A notification should appear (and a ring, if enabled).
+
+`adb logcat -s WakeWordService` shows each detection and, on stop, the spotter duty cycle.
 
 ## Quick start (desktop)
 
@@ -98,7 +137,7 @@ The tests use committed WAV fixtures for that reason.
 ```bash
 cd android/wakeword-core && gradle test                    # JVM, no Android SDK needed
 cd android/verify && ./prepare.sh && gradle compileKotlin  # type-check the Android module
-cd android && ./fetch_models.sh && gradle :wakeword-android:assembleRelease    # needs the Android SDK
+cd android && ./fetch_models.sh && ./gradlew :demo-app:assembleDebug   # needs the Android SDK
 ```
 
 ## Design notes
@@ -125,7 +164,7 @@ cd android && ./fetch_models.sh && gradle :wakeword-android:assembleRelease    #
 
 ## Next steps (not done)
 
-1. Build the APK and measure CPU and battery on 2–3 real phones (the numbers above are x86).
+1. Run the demo APK on 2–3 real phones and measure CPU and battery (the numbers above are x86).
 2. Record real voices for a truthful recall and false-alarm number, then pick the default beam/boost.
 3. Put an energy pre-gate in front of Silero. Silero is about half of idle CPU, and a cheap RMS check
    can skip it in silence.

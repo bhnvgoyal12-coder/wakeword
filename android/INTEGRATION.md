@@ -49,7 +49,9 @@ AGC and noise suppression, which hurt both detectors.
 
 ```kotlin
 // Settings screen:
-WakeWord.validate(ctx, KeywordSpec(userText))?.let { showWarning(it) }  // too short / bad chars
+val v = WakeWord.validate(ctx, KeywordSpec(userText))
+if (!v.ok) return showError(v.error)          // digits, symbols, empty
+v.warning?.let { showWarning(it) }            // too short: likely false rings
 WakeWord.start(ctx, listOf(KeywordSpec(userText)))
 
 // Home activity (the launcher):
@@ -84,7 +86,7 @@ WakeWordService.frameListeners += WakeWordService.FrameListener { pcm, n -> clap
 | Phone in pocket or bag | Muffled audio, lower recall | Expected. The clap/whistle path has the same issue. |
 | Ringing re-triggers | The mic hears the ring | The ring isn't speech, so the VAD mostly stays closed. `EngineConfig.cooldownS` (2 s) blocks double-fires. |
 | Keywords with digits or symbols | `KeywordException` | Use `WakeWord.validate()` in the settings UI and ask users to spell numbers out. |
-| Very short keywords ("buddy", "phone") | Many false rings | `validate()` returns a warning. Nudge users toward 2–3 words. |
+| Very short keywords ("buddy", "phone") | Many false rings | `validate()` returns a `warning`. Nudge users toward 2–3 words. |
 
 ## 4. Tuning per keyword
 

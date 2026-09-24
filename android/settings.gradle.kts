@@ -6,12 +6,14 @@ pluginManagement {
         gradlePluginPortal()
     }
     plugins {
-        id("com.android.library") version "8.5.2"
+        id("com.android.library") version "8.7.3"
+        id("com.android.application") version "8.7.3"
         kotlin("android") version "2.0.21"
     }
 }
 dependencyResolutionManagement {
     repositories {
+        maven(rootDir.resolve("local-maven")) { content { includeGroup("com.k2fsa.sherpa.onnx") } } // fetch_models.sh
         google()
         maven("https://maven-central.storage-download.googleapis.com/maven2")
         mavenCentral()
@@ -20,3 +22,4 @@ dependencyResolutionManagement {
 rootProject.name = "wakeword"
 includeBuild("wakeword-core")
 include(":wakeword-android")
+include(":demo-app")

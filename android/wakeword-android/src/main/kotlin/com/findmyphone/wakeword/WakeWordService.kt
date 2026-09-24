@@ -20,7 +20,11 @@ import android.os.Looper
 import android.os.Process
 import android.util.Log
 import com.findmyphone.wakeword.core.Detection
+import java.text.DateFormat
+import java.util.Date
 import java.util.concurrent.CopyOnWriteArraySet
+import kotlin.math.log10
+import kotlin.math.sqrt
 
 /**
  * Foreground service (type=microphone) that owns an AudioRecord and runs [WakeWordEngine]
@@ -127,6 +131,10 @@ class WakeWordService : Service() {
                 }
                 for (l in frameListeners) l.onFrame(buf, n)
                 for (d in engine.accept(buf, n)) dispatch(d)
+                if (WakeWord.meterListeners.isNotEmpty()) {
+                    val m = WakeWord.Meter(levelDb(buf, n), engine.isSpotting)
+                    main.post { WakeWord.publishMeter(m) }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "audio loop crashed", e)
@@ -141,7 +149,32 @@ class WakeWordService : Service() {
 
     private fun dispatch(d: Detection) {
         Log.i(TAG, "wake word ${d.keyword} at ${d.timeS}s")
-        main.post { WakeWord.dispatchDetection(this, d) }
+        main.post {
+            WakeWord.dispatchDetection(this, d)
+            notifyDetection(d)
+        }
+    }
+
+    /** Heads-up notification per detection, so detections are visible with the screen locked. */
+    private fun notifyDetection(d: Detection) {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(CHANNEL_DETECTIONS) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_DETECTIONS, "Wake word detections", NotificationManager.IMPORTANCE_HIGH),
+            )
+        }
+        val open = packageManager.getLaunchIntentForPackage(packageName)?.let {
+            PendingIntent.getActivity(this, 1, it, PendingIntent.FLAG_IMMUTABLE)
+        }
+        val time = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date())
+        val n = Notification.Builder(this, CHANNEL_DETECTIONS)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("Heard \"${d.keyword.replace('_', ' ').lowercase()}\"")
+            .setContentText("at $time")
+            .setAutoCancel(true)
+            .apply { if (open != null) setContentIntent(open) }
+            .build()
+        runCatching { nm.notify(DETECTION_NOTIFICATION_ID, n) } // no-op without POST_NOTIFICATIONS
     }
 
     private fun notification(what: String): Notification {
@@ -175,7 +208,15 @@ class WakeWordService : Service() {
         const val SAMPLE_RATE = 16000
         const val FRAME = 1600 // 100 ms
         private const val CHANNEL = "wakeword"
+        private const val CHANNEL_DETECTIONS = "wakeword_detections"
         private const val NOTIFICATION_ID = 0x57414b45
+        private const val DETECTION_NOTIFICATION_ID = NOTIFICATION_ID + 1
+
+        private fun levelDb(pcm: ShortArray, n: Int): Float {
+            var sum = 0.0
+            for (i in 0 until n) { val v = pcm[i] / 32768.0; sum += v * v }
+            return (20 * log10(sqrt(sum / n) + 1e-9)).toFloat().coerceAtLeast(-90f)
+        }
         internal const val ACTION_STOP = "com.findmyphone.wakeword.STOP"
 
         /** Share this service's mic with e.g. the clap/whistle detector instead of opening a second AudioRecord. */
