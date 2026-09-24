@@ -1,0 +1,133 @@
+# Wake word engine for Find My Phone
+
+An always-on listener for a **user-typed** wake phrase ("hey buddy", "where's my phone"),
+with no per-keyword training. Built on the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+open-vocabulary keyword spotter (3.3M-param streaming zipformer, int8, ~4 MB), with a
+Silero VAD gate in front so the neural spotter only runs while someone is speaking.
+
+```
+mic 16 kHz ─► pre-roll (0.5 s) ─► Silero VAD ─► sherpa KWS stream ─► cooldown ─► action (ring)
+                                   │
+                                   └─ 1 s of no speech: pad 0.8 s, flush, drop stream → spotter idle
+```
+
+| Directory | What it is | Verified here |
+|---|---|---|
+| `python/` | Reference engine, CLI (mic or WAV), evaluation pipeline | 19 pytest tests; full evaluation below |
+| `android/wakeword-core` | Pure-Kotlin port: tokenizer, gating state machine, cooldown, resampler | 16 JUnit tests on the JVM |
+| `android/wakeword-android` | sherpa adapters, microphone foreground service, `WakeWord` facade, ring action | **Type-checked only** against `android.jar` (API 34) and the sherpa-onnx 1.13.8 AAR. **Not built into an APK or run on a phone.** |
+| `shared/` | Tokenizer vocabulary + golden file both tokenizers are tested against | — |
+
+To integrate into the launcher, see **[android/INTEGRATION.md](android/INTEGRATION.md)**.
+
+## Quick start (desktop)
+
+```bash
+cd python
+pip install -r requirements.txt sounddevice      # models (~20 MB) download on first run
+python cli.py --keyword "hey buddy" --mic --ring
+python cli.py --keyword "hey buddy" --keyword "find my phone" --wav some_recording.wav
+pytest tests
+```
+
+## Measured results
+
+Keyword "hey buddy", default settings (beam 4, threshold 0.25, boost 1.0, Silero gate).
+Dataset: 100 keyword utterances from random voices of a 904-speaker TTS at 0.85–1.2× speed,
+some wrapped in carrier phrases ("um, hey buddy, where are you"). Negatives: 30 min of
+everyday speech, 25% of it near-misses ("hey body", "hey bobby", "buddy", "hey daddy",
+"heavy duty"…). Noise is pink/brown/white/babble, rotating every 20 s.
+
+| Noise | Recall | False alarms / hour of talk | Latency after word ends (median / p90) |
+|---|---|---|---|
+| clean | **92%** | 0 | 0.46 s / 0.56 s |
+| 10 dB SNR (TV in the room) | **79%** | 2 (1 event: "Why is the printer not working again?") | 0.43 s / 0.59 s |
+| 0 dB SNR (noise as loud as the voice) | **43%** | 2 (1 event: "hey body") | 0.46 s / 0.60 s |
+
+CPU, single thread on this x86 container (a phone core is maybe 2–4× slower; **measure on a device**):
+
+| Scenario | Spotter running | CPU of one core |
+|---|---|---|
+| Quiet room, ~10% of the time someone talks | 23% of the time | **0.9%** |
+| Busy room, ~30% talk, louder ambient noise | 54% | 1.4% |
+| No gate (spotter always on) | 100% | 2.0% |
+
+### What the tuning experiments showed
+
+- **The VAD gate improves accuracy as well as saving battery.** With no gate the spotter runs
+  one endless stream and recall drops from 92% to 80% on clean audio. Starting a fresh stream
+  per utterance helps it. An energy gate is cheaper (0.45% CPU) but lost 9 points of recall at 0 dB.
+- **Beam width (`max_active_paths`) is the real trade-off knob.** Beam 8 gets 95/87/62% recall,
+  but false alarms go from ~0–2/h to **12–16/h**, almost all on near-misses ("hey body",
+  "buddy", "hey birdie"). A false alarm here rings the phone, so the default stays at 4.
+- **Boost 2.0** is a milder version of the same trade: 94/80/53% recall at 4–6 false alarms/h.
+  It's a reasonable "sensitive" user setting. Boost ≥3 hurt recall.
+- **Threshold barely matters** at beam 4: 0.15 to 0.45 changes recall by about 5 points and doesn't change false alarms.
+- int8 models are as accurate as fp32. Ship int8.
+
+### How far to trust these numbers
+
+- **They're optimistic.** TTS voices are cleaner and more uniform than people. Noise was
+  generated, not recorded. The near-miss rate is deliberately exaggerated, so real-life false
+  alarms/hour on beam 8 would be lower. Missed detections in real rooms will be higher.
+- 100 positives means about ±3–5 points of noise. "0 false alarms in 30 min" is not "0 per day".
+- **0 dB SNR is where this model breaks down (43%).** Phone in a pocket, music playing, or
+  shouting from another room will often fail. If that matters, the next step is a
+  **trained model for one fixed phrase** (openWakeWord or Porcupine). That typically gets
+  much better noise robustness, but users can't choose their own word.
+- To get real numbers: record 20–30 people saying the phrase on the actual phones, plus
+  a few hours of household audio, and run `eval/evaluate.py` against those WAVs.
+
+## Reproducing
+
+```bash
+cd python
+python -m eval.make_dataset --keyword "hey buddy" --out ../data/hey_buddy \
+    --confusable "hey body" --confusable "hey bobby" --confusable "hey daddy" \
+    --confusable "a buddy" --confusable "hey birdie" --confusable "heavy duty"   # ~1 min
+python -m eval.evaluate ../data/hey_buddy --show-fa        # ~3 min on 4 cores
+python -m eval.evaluate ../data/hey_buddy --sweep          # boost x threshold grid
+python -m eval.evaluate ../data/hey_buddy --paths 8        # beam comparison
+python -m eval.evaluate ../data/hey_buddy --gates          # silero / energy / none
+python -m eval.idle_cost --minutes 10                      # quiet-room CPU
+```
+
+TTS output is random on every call, so a regenerated dataset gives slightly different numbers.
+The tests use committed WAV fixtures for that reason.
+
+```bash
+cd android/wakeword-core && gradle test                    # JVM, no Android SDK needed
+cd android/verify && ./prepare.sh && gradle compileKotlin  # type-check the Android module
+cd android && ./fetch_models.sh && gradle :wakeword-android:assembleRelease    # needs the Android SDK
+```
+
+## Design notes
+
+- **Tokenizer.** sherpa takes keywords as the model's sentencepiece pieces (`▁HE Y ▁BU D D Y`).
+  Both Python and Kotlin use a ~60-line Viterbi unigram encoder over `shared/kws_vocab.tsv`, so
+  the phone doesn't need sentencepiece. It matches the reference library on 3,000+ random
+  and real phrases. Only letters, apostrophes and spaces are allowed, so numbers must be spelled out.
+- **Short phrases are refused softly.** `validate()` warns for one-word or <4-token phrases.
+  Those are false-alarm magnets.
+- **Pre-roll (0.5 s)** replays audio from before the VAD fired, so the first syllable reaches the spotter.
+- **Tail pad (0.8 s)**: the model emits a keyword about 0.5 s after it ends. When the stream is
+  closed, silence is fed so a keyword spoken just before a pause still fires.
+- **Cooldown (2 s)** blocks double-fires from one utterance.
+
+## Why not Vosk / Porcupine / openWakeWord?
+
+- **Vosk** (grammar-restricted ASR) also takes arbitrary words, but it's a ~40 MB general
+  recognizer running continuously. The sherpa KWS model is built for this task and about 10× smaller.
+- **Porcupine** is the most polished, but custom words need their console, it's per-device
+  licensed, and it's closed.
+- **openWakeWord / microWakeWord** give better accuracy for a *fixed* phrase, but each phrase
+  needs a training run. That's the right upgrade if you ship one default phrase.
+
+## Next steps (not done)
+
+1. Build the APK and measure CPU and battery on 2–3 real phones (the numbers above are x86).
+2. Record real voices for a truthful recall and false-alarm number, then pick the default beam/boost.
+3. Put an energy pre-gate in front of Silero. Silero is about half of idle CPU, and a cheap RMS check
+   can skip it in silence.
+4. Optional: "enroll" mode. Record the user saying their phrase three times and auto-tune
+   boost/threshold against those recordings.

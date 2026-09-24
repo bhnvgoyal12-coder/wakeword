@@ -89,8 +89,10 @@ WakeWordService.frameListeners += WakeWordService.FrameListener { pcm, n -> clap
 ## 4. Tuning per keyword
 
 `KeywordSpec(text, boost, threshold)`:
-- `threshold` (default 0.25): raise it (0.35–0.45) if the phone rings when nobody said the phrase.
-- `boost` (default 1.0): leave it at 1.0. In our measurements, raising it made recall *worse*.
+- `threshold` (default 0.25): raising it to 0.35–0.45 costs recall but barely changes false alarms
+  in our tests. It's a weak knob for this model.
+- `boost` (default 1.0): 2.0 catches more keywords in noise (43→53% at 0 dB SNR) but triples
+  false alarms (≈2→6 per hour of talk). Values above 2 make recall *worse*.
 - `maxActivePaths` (engine, default 4): 8 catches more keywords in noise but false-alarms
   far more. See the README table before changing it.
 
