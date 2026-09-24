@@ -18,26 +18,43 @@ mic 16 kHz ─► pre-roll (0.5 s) ─► Silero VAD ─► sherpa KWS stream �
 | `android/wakeword-android` | sherpa adapters, microphone foreground service, `WakeWord` facade, ring action | Type-checked here against `android.jar` (API 34) and the sherpa-onnx 1.13.8 AAR. Built by CI into the demo APK. **Not yet run on a phone by me.** |
 | `shared/` | Tokenizer vocabulary + golden file both tokenizers are tested against | — |
 
-| `android/demo-app` | One-screen test app: type a phrase, start, see mic level, speech indicator and detections | APK built by GitHub Actions (see below) |
+| `android/demo-app` | One-screen test app: type a phrase, start, see mic level, speech indicator and detections | APK built by CI; on-device tests run on an Android 14 emulator in CI |
 
 To integrate into the launcher, see **[android/INTEGRATION.md](android/INTEGRATION.md)**.
 
 ## Run it on your phone
 
-**Option A: download the APK (no tools needed).**
-1. Open the repo's **Actions** tab → latest **build** run on this branch → **Artifacts** →
-   `wakeword-demo-apk`. Unzip it to get `demo-app-debug.apk`.
-2. Copy it to the phone (or open the Actions page on the phone), tap it, and allow
-   "Install unknown apps" for your browser or file manager when prompted.
-3. Open **Wake Word Test**, type a phrase, tap **Start listening**, and grant microphone and
-   notification permission.
-
-**Option B: Android Studio + USB.**
+**Fastest: phone plugged in with USB debugging on** (macOS / Linux / WSL):
 ```bash
-cd android && ./fetch_models.sh        # models + sherpa AAR (once)
-./gradlew :demo-app:installDebug       # phone connected with USB debugging on
+git clone -b claude/epic-newton-ncmg8k https://github.com/bhnvgoyal12-coder/wakeword && cd wakeword/android
+./run_on_phone.sh
 ```
-Or open `android/` in Android Studio, pick the `demo-app` run configuration, and press Run.
+The script checks the phone is connected and authorized, downloads the latest CI-built APK
+(needs the [GitHub CLI](https://cli.github.com) after `gh auth login`, or builds locally if you
+have the Android SDK), installs it with mic and notification permissions pre-granted, and
+launches it. It then streams the app's log, so every detection and error shows in your terminal.
+You can also pass an APK you downloaded yourself: `./run_on_phone.sh ~/Downloads/demo-app-debug.apk`.
+It needs only `adb` (`brew install --cask android-platform-tools` / `sudo apt install adb`).
+
+**Windows (no bash):** download `wakeword-demo-apk` from the repo's **Actions** tab (latest
+**build** run → Artifacts), unzip it, then:
+```
+adb install -r -g demo-app-debug.apk
+adb shell am start -n com.findmyphone.wakeword.demo/.MainActivity
+adb logcat -s WakeWordService
+```
+
+**Android Studio:** run `android/fetch_models.sh` once, open `android/`, choose the `demo-app`
+configuration and press Run.
+
+**No computer:** open the Actions page on the phone, download the artifact, unzip it, tap
+the APK, and allow "Install unknown apps".
+
+**Why not an emulator?** An emulator can't meaningfully test "does it hear *me*". Its mic is your
+laptop's mic through a virtual device. CI does use an emulator for something narrower: on every
+push it runs `EngineOnDeviceTest` on an Android 14 emulator. That test checks the native
+libraries and models load, recorded "hey buddy" clips are detected, other speech isn't, and the
+listening service starts.
 
 **What the screen shows**
 

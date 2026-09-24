@@ -35,6 +35,9 @@ class WakeWordEngine private constructor(
     fun accept(samples: FloatArray): List<Detection> =
         spotter.accept(resampler?.process(samples) ?: samples)
 
+    /** End of input: decode anything still buffered (a keyword right at the end of the audio). */
+    fun flush(): List<Detection> = spotter.flush()
+
     fun release() {
         decoder.release()
         gate.release()
